@@ -126,4 +126,3 @@ async def generate_kundali(data: ProfileData):
 @app.get("/")
 def read_root():
     return {"status": "TaaraVaani Engine is Online"}
-    return {"status": "TaaraVaani Engine is Online"}
