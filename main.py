@@ -82,7 +82,8 @@ async def generate_kundali(data: ProfileData):
         local_dt = local_tz.localize(datetime(year, month, day, hour, minute, sec))
         utc_dt = local_dt.astimezone(pytz.utc)
         
-        swe.set_sid_mode(swe.SIDM_LAHIRI)
+        # 🚨 Upgraded from SIDM_LAHIRI to True Chitra Paksha for modern astronomical precision
+        swe.set_sid_mode(swe.SIDM_TRUE_CHITRA)
         julday = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, utc_dt.hour + utc_dt.minute/60.0)
         
         ayanamsa = swe.get_ayanamsa_ut(julday)
