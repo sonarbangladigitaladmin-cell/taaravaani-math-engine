@@ -79,7 +79,7 @@ async def generate_kundali(data: ProfileData):
         year, month, day = map(int, data.dob.split('-'))
         hour, minute, sec = map(int, (data.time + ':00').split(':')[:3])
         
-       local_dt = local_tz.localize(datetime(year, month, day, hour, minute, sec))
+        local_dt = local_tz.localize(datetime(year, month, day, hour, minute, sec))
         utc_dt = local_dt.astimezone(pytz.utc)
         
         # 🚨 Upgraded to True Chitra Paksha (Note the Swiss Ephemeris spelling: CITRA without the H)
