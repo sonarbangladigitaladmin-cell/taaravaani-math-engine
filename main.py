@@ -317,7 +317,7 @@ async def generate_kundali(data: ProfileData):
             (swe.TRUE_NODE, 'Ra', 'Rahu'),
         ]
 
-        # FLG_SIDEREAL applies the active sid_mode ayanamsha automatically.
+    
         # FLG_SPEED gives us the daily motion — negative = retrograde.
         CALC_FLAGS = swe.FLG_SWIEPH | swe.FLG_SPEED
 
