@@ -126,6 +126,13 @@ ZODIAC_SIGNS = [
 SIGN_LORDS = ["Mars","Venus","Mercury","Moon","Sun","Mercury","Venus","Mars","Jupiter","Saturn","Saturn","Jupiter"]
 NAK_LORDS  = ["Ketu","Venus","Sun","Moon","Mars","Rahu","Jupiter","Saturn","Mercury"]
 
+# ── Avakhada Chakra & Panchang Tables ─────────────────────────────────────────
+YOGAS = ["Vishkumbha", "Priti", "Ayushman", "Saubhagya", "Shobhana", "Atiganda", "Sukarma", "Dhriti", "Shoola", "Ganda", "Vriddhi", "Dhruva", "Vyaghata", "Harshana", "Vajra", "Siddhi", "Vyatipata", "Variyana", "Parigha", "Shiva", "Siddha", "Sadhya", "Shubha", "Shukla", "Brahma", "Indra", "Vaidhriti"]
+YONIS = ["Ashwa", "Gaja", "Aja", "Sarp", "Sarp", "Shwan", "Marjar", "Mesh", "Marjar", "Mushak", "Mushak", "Gau", "Mahish", "Vyaghr", "Mahish", "Vyaghr", "Mrig", "Mrig", "Shwan", "Kapi", "Nakul", "Kapi", "Simha", "Ashwa", "Gau", "Gau", "Gaja"]
+GANS = ["Deva", "Manush", "Rakshas", "Manush", "Deva", "Rakshas", "Deva", "Deva", "Rakshas", "Rakshas", "Manush", "Manush", "Deva", "Rakshas", "Deva", "Rakshas", "Deva", "Rakshas", "Rakshas", "Manush", "Manush", "Deva", "Rakshas", "Rakshas", "Manush", "Manush", "Deva"]
+NADIS = ["Aadi", "Madhya", "Antya", "Antya", "Madhya", "Aadi", "Aadi", "Madhya", "Antya", "Antya", "Madhya", "Aadi", "Aadi", "Madhya", "Antya", "Antya", "Madhya", "Aadi", "Aadi", "Madhya", "Antya", "Antya", "Madhya", "Aadi", "Aadi", "Madhya", "Antya"]
+LETTERS = ["Chu","Che","Cho","La","Li","Lu","Le","Lo","A","I","U","E","O","Va","Vi","Vu","Ve","Vo","Ka","Ki","Ku","Gha","Ng","Chh","Ke","Ko","Ha","Hi","Hu","He","Ho","Da","Di","Du","De","Do","Ma","Mi","Mu","Me","Mo","Ta","Ti","Tu","Te","To","Pa","Pi","Pu","Sha","Na","Tha","Pe","Po","Ra","Ri","Ru","Re","Ro","Ta","Ti","Tu","Te","To","Na","Ni","Nu","Ne","No","Ya","Yi","Yu","Ye","Yo","Bha","Bhi","Bhu","Dha","Bha","Dha","Bhe","Bho","Ja","Ji","Ju","Je","Jo","Gha","Ga","Gi","Gu","Ge","Go","Sa","Si","Su","Se","So","Da","Di","Du","Tha","Jha","Jna","De","Do","Cha","Chi"]
+
 # ── KP Sub-lord Calculator ────────────────────────────────────────────────────
 def get_kp_lords(deg: float):
     sign_lord  = SIGN_LORDS[int(deg / 30) % 12]
@@ -485,13 +492,53 @@ async def generate_kundali(data: ProfileData):
         # KEY FIX: use "SAV (Total)" to match Flutter's _kAshtakPlanets constant
         bav_map["SAV (Total)"] = {str(i): score for i, score in enumerate(sav_raw)}
 
-        # ── 11. Panchang ──────────────────────────────────────────────────────
+        # ── 11. Extended Panchang & Avakhada Chakra ───────────────────────────
         tithi_diff = (moon_lon - sun_lon) % 360
         tithi_idx  = int(tithi_diff // 12)
         nak_idx    = int(moon_lon // (360 / 27))
+        charan     = int((moon_lon % (360 / 27)) / (360 / 108)) + 1
+        yoga_idx   = int((sun_lon + moon_lon) // (13 + 20/60)) % 27
+        
+        # Karan Calculation
+        karan_val = int(tithi_diff // 6)
+        if karan_val == 0: karan_name = "Kintughna"
+        elif karan_val == 57: karan_name = "Shakuni"
+        elif karan_val == 58: karan_name = "Chatushpada"
+        elif karan_val == 59: karan_name = "Naga"
+        else: karan_name = ["Bava", "Balava", "Kaulava", "Taitila", "Gara", "Vanija", "Vishti"][(karan_val - 1) % 7]
+
+        # Sunrise & Sunset (Swiss Ephemeris exact calculation)
+        sunrise_str, sunset_str = "06:00:00", "18:00:00"
+        try:
+            res_rise = swe.rise_trans(julday, swe.SUN, b'', swe.CALC_RISE, (data.lng, data.lat, 0.0), 0, 0)
+            res_set  = swe.rise_trans(julday, swe.SUN, b'', swe.CALC_SET,  (data.lng, data.lat, 0.0), 0, 0)
+            def jd_to_local(jd):
+                y, m, d, h = swe.revjul(jd)
+                dt = datetime(y, m, d, int(h), int((h - int(h)) * 60), int((((h - int(h)) * 60) - int((h - int(h)) * 60)) * 60), tzinfo=pytz.utc)
+                return dt.astimezone(local_tz).strftime('%H:%M:%S')
+            sunrise_str = jd_to_local(res_rise[0][0])
+            sunset_str  = jd_to_local(res_set[0][0])
+        except Exception: pass
+
+        avakhada_out = {
+            "Varna": ["Kshattriya", "Vaishya", "Shudra", "Brahmin"][moon_sign % 4],
+            "Vashya": ["Chatushpada", "Chatushpada", "Dwipada", "Jalchar", "Vanchar", "Dwipada", "Dwipada", "Keet", "Chatushpada", "Chatushpada", "Dwipada", "Jalchar"][moon_sign],
+            "Yoni": YONIS[nak_idx],
+            "Gan": GANS[nak_idx],
+            "Nadi": NADIS[nak_idx],
+            "Sign": ZODIAC_SIGNS[moon_sign],
+            "Sign Lord": SIGN_LORDS[moon_sign],
+            "Nakshatra-Charan": f"{NAKSHATRAS[nak_idx]} - {charan}",
+            "Yog": YOGAS[yoga_idx],
+            "Karan": karan_name,
+            "Tithi": TITHIS[tithi_idx],
+            "Yunja": "Poorva",
+            "Tatva": ["Fire", "Earth", "Air", "Water"][moon_sign % 4],
+            "Name Alphabet": LETTERS[int(moon_lon // (360/108))],
+            "Paya": ["Gold", "Iron", "Copper", "Silver"][nak_idx % 4]
+        }
 
         # ── 12. KP Planets ────────────────────────────────────────────────────
-        kp_body_map = [
             ("Ascendant", asc_deg),
             ("Sun",       planet_degrees["Su"]),
             ("Moon",      planet_degrees["Mo"]),
@@ -550,6 +597,11 @@ async def generate_kundali(data: ProfileData):
                 "ascendant_sign": ZODIAC_SIGNS[asc_sign],
                 "nakshatra":      NAKSHATRAS[nak_idx],
                 "tithi":          TITHIS[tithi_idx],
+                "sunrise":        sunrise_str,
+                "sunset":         sunset_str,
+                "karan":          karan_name,
+                "yog":            YOGAS[yoga_idx],
+                "avakhada":       avakhada_out,
             },
             "chart_houses":       chart_houses,
             "chart_signs":        chart_signs,
