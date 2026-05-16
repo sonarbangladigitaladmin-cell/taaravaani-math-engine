@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import swisseph as swe
 from timezonefinder import TimezoneFinder
 import pytz
@@ -588,7 +588,7 @@ async def generate_kundali(data: ProfileData):
         ]
 
         # ── 15. Vimshottari & Yogini Dasha Engine (Time Travel Math) ──────────
-        from datetime import timedelta
+    
         
         birth_dt = datetime(year, month, day)
         nak_width = 360 / 27
