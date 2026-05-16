@@ -31,6 +31,24 @@ app.add_middleware(
 
 tf = TimezoneFinder()
 
+# ── Swiss Ephemeris File Path ─────────────────────────────────────────────────
+# FIX 1: Always call set_ephe_path() at startup.
+# True Citra (ID 27) is a DYNAMIC ayanamsha — it calls fixstar_ut("Spica", jd)
+# internally to find Spica's true ecliptic longitude. This requires sefstars.txt
+# (the fixed star catalog) and ideally the .se1 planetary data files.
+# Without set_ephe_path(), pyswisseph cannot find these files on the server's
+# filesystem, the internal star lookup silently corrupts the JD reference to ~0
+# (JD 4713 BCE), and calc_ut() throws "outside Moshier planet range 625000..2818000".
+# Lahiri (ID 1) never needed this because it uses the Newcomb formula only.
+#
+# To deploy: copy sefstars.txt (and optionally sepl*.se1, semo*.se1) into the
+# directory pointed to by SWE_EPHE_PATH.  The star catalog alone (14 KB) is
+# sufficient to unlock True Citra.  Full .se1 files give better precision but
+# are not required.
+import os
+_EPHE_PATH = os.environ.get("SWE_EPHE_PATH", "/app/ephe")
+swe.set_ephe_path(_EPHE_PATH)
+
 # ── Ayanamsha Registry ────────────────────────────────────────────────────────
 # Always use integer IDs — never swe.SIDM_* named constants.
 # Named constants were added at different pyswisseph versions and cause
@@ -43,9 +61,28 @@ tf = TimezoneFinder()
 AYANAMSHA_MAP: dict[str, int] = {
     "lahiri":     1,
     "raman":      3,
-    "true_citra": 27,   # True Chitrapaksha — recommended for precision work
+    "true_citra": 27,   # True Chitrapaksha — requires sefstars.txt in ephe path
 }
 DEFAULT_AYANAMSHA = "true_citra"
+
+# ── True Citra Availability Probe ─────────────────────────────────────────────
+# FIX 2: Probe at startup whether ID 27 works on this build+environment.
+# If True Citra is unavailable (missing catalog files or old pyswisseph),
+# we fall back to Lahiri automatically so the server never returns a JD error
+# to Flutter.  The ayanamsha_used field in the response tells Flutter which
+# ayanamsha was actually applied.
+def _probe_true_citra() -> bool:
+    """Returns True only if SIDM_TRUE_CITRA (27) produces a sane ayanamsha at J2000.0."""
+    try:
+        swe.set_sid_mode(27)
+        val = swe.get_ayanamsa_ut(2451545.0)   # J2000.0 — well inside any valid range
+        return 20.0 < val < 30.0               # sane ayanamsha is ~23–24° right now
+    except Exception:
+        return False
+    finally:
+        swe.set_sid_mode(1)   # reset to Lahiri so the server starts clean
+
+_TRUE_CITRA_AVAILABLE: bool = _probe_true_citra()
 
 # ── Request Model ─────────────────────────────────────────────────────────────
 class ProfileData(BaseModel):
@@ -225,7 +262,16 @@ async def generate_kundali(data: ProfileData):
         # swe.SIDM_* named constants were added at different pyswisseph versions.
         # Using the integer directly works on every pyswisseph build from 1.x onward.
         requested_ayanamsha = (data.ayanamsha or DEFAULT_AYANAMSHA).lower().strip()
-        sid_mode_id         = AYANAMSHA_MAP.get(requested_ayanamsha, AYANAMSHA_MAP[DEFAULT_AYANAMSHA])
+
+        # FIX 3a: Fall back to Lahiri if True Citra is not available.
+        # True Citra needs sefstars.txt in the ephemeris path.  The startup probe
+        # (_TRUE_CITRA_AVAILABLE) verified this once at boot so we don't repeat
+        # the star lookup on every request.
+        if requested_ayanamsha == "true_citra" and not _TRUE_CITRA_AVAILABLE:
+            requested_ayanamsha = "lahiri"
+            # Note: ayanamsha_used in the response will reflect the actual fallback
+
+        sid_mode_id = AYANAMSHA_MAP.get(requested_ayanamsha, AYANAMSHA_MAP[DEFAULT_AYANAMSHA])
         swe.set_sid_mode(sid_mode_id)   # ← must be called before any swe calculation
 
         # ── 3. Julian Day ─────────────────────────────────────────────────────
@@ -233,6 +279,21 @@ async def generate_kundali(data: ProfileData):
             utc_dt.year, utc_dt.month, utc_dt.day,
             utc_dt.hour + utc_dt.minute / 60.0 + utc_dt.second / 3600.0,
         )
+
+        # FIX 3b: JD sanity guard — Moshier range is 625000–2818000 (≈1800 BCE–3000 CE).
+        # A JD near 0 means the date/time parsing or timezone conversion has gone wrong.
+        # Catching this here gives a readable error instead of the cryptic range message.
+        if not (625000 < julday < 2818000):
+            return {
+                "success": False,
+                "error": (
+                    f"Computed Julian Day {julday:.3f} is outside the supported ephemeris "
+                    f"range (625000–2818000, i.e. 1800 BCE–3000 CE). "
+                    f"Check that dob='{data.dob}' and time='{data.time}' are valid and "
+                    f"that the timezone resolved correctly (tz='{tz_str}')."
+                ),
+            }
+
         ayanamsa = swe.get_ayanamsa_ut(julday)
 
         # ── 4. Lagna (Ascendant) ──────────────────────────────────────────────
@@ -481,7 +542,7 @@ async def generate_kundali(data: ProfileData):
         # ── 15. Return ─────────────────────────────────────────────────────────
         return {
             "success":          True,
-            "ayanamsha_used":   requested_ayanamsha,   # echo back for Flutter debug
+            "ayanamsha_used":   requested_ayanamsha,   # reflects actual fallback if True Citra was unavailable
             "ayanamsha_value":  round(ayanamsa, 6),    # actual degrees value
             "kundali_data": {
                 "sun_sign":       ZODIAC_SIGNS[sun_sign],
@@ -525,11 +586,14 @@ def get_version():
     Returns the live pyswisseph version installed on this server.
     Hit this endpoint first when debugging ayanamsha constant errors —
     if the version is below 2.x, SIDM_TRUE_CITRA (ID 27) may not be available.
+    Also reports true_citra_available so Flutter can warn the user proactively.
     """
     return {
-        "pyswisseph_version": swe.__version__,
-        "available_ayanamshas": list(AYANAMSHA_MAP.keys()),
-        "default_ayanamsha":    DEFAULT_AYANAMSHA,
+        "pyswisseph_version":    swe.__version__,
+        "ephe_path":             _EPHE_PATH,
+        "true_citra_available":  _TRUE_CITRA_AVAILABLE,
+        "available_ayanamshas":  list(AYANAMSHA_MAP.keys()),
+        "default_ayanamsha":     DEFAULT_AYANAMSHA,
     }
 @app.api_route("/ping", methods=["GET", "HEAD"])
 def ping():
