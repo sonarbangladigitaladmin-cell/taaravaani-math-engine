@@ -39,6 +39,29 @@ TITHIS = ['Pratipada', 'Dwitiya', 'Tritiya', 'Chaturthi', 'Panchami', 'Shashthi'
 NAKSHATRAS = ['Ashwini', 'Bharani', 'Krittika', 'Rohini', 'Mrigashirsha', 'Ardra', 'Punarvasu', 'Pushya', 'Ashlesha', 'Magha', 'Purva Phalguni', 'Uttara Phalguni', 'Hasta', 'Chitra', 'Swati', 'Vishakha', 'Anuradha', 'Jyeshtha', 'Moola', 'Purva Ashadha', 'Uttara Ashadha', 'Shravana', 'Dhanishta', 'Shatabhisha', 'Purva Bhadrapada', 'Uttara Bhadrapada', 'Revati']
 ZODIAC_SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces']
 
+def get_kp_lords(deg: float):
+    """Returns (Sign Lord, Star Lord, Sub Lord) for a sidereal longitude."""
+    lords      = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
+    years      = [7, 20, 6, 10, 7, 18, 16, 19, 17]
+    sign_lords = ["Mars", "Venus", "Mercury", "Moon", "Sun", "Mercury",
+                  "Venus", "Mars", "Jupiter", "Saturn", "Saturn", "Jupiter"]
+    sign_lord  = sign_lords[int(deg / 30) % 12]
+    nak_span   = 13 + (20 / 60)
+    nak_idx    = int(deg / nak_span)
+    star_lord  = lords[nak_idx % 9]
+    deg_in_nak = deg - (nak_idx * nak_span)
+    min_in_nak = deg_in_nak * 60
+    curr, acc  = nak_idx % 9, 0.0
+    sub_lord   = lords[curr]
+    for _ in range(9):
+        span = (years[curr] / 120) * 800
+        if min_in_nak < acc + span:
+            sub_lord = lords[curr]
+            break
+        acc += span
+        curr = (curr + 1) % 9
+    return sign_lord, star_lord, sub_lord
+
 @app.post("/api/kundali")
 async def generate_kundali(data: ProfileData):
     try:
@@ -216,20 +239,67 @@ async def generate_kundali(data: ProfileData):
         tithi_idx = int(tithi_diff // 12)
         nak_idx = int(moon_lon // (360/27))
 
+        # ── KP Planets ────────────────────────────────────────────────────────────
+        ketu_lon = (planet_degrees["Ra"] + 180) % 360
+        kp_body_map = [
+            ("Ascendant", asc_deg),
+            ("Sun",       planet_degrees["Su"]),
+            ("Moon",      planet_degrees["Mo"]),
+            ("Mars",      planet_degrees["Ma"]),
+            ("Mercury",   planet_degrees["Me"]),
+            ("Jupiter",   planet_degrees["Ju"]),
+            ("Venus",     planet_degrees["Ve"]),
+            ("Saturn",    planet_degrees["Sa"]),
+            ("Rahu",      planet_degrees["Ra"]),
+            ("Ketu",      ketu_lon),
+        ]
+        kp_planets_out = []
+        for p_name, p_deg in kp_body_map:
+            sl, stl, subl = get_kp_lords(p_deg)
+            kp_planets_out.append({"Planet": p_name, "Sign Lord": sl, "Star Lord": stl, "Sub Lord": subl})
+
+        # ── KP Cusps (tropical house cusps → sidereal via ayanamsa) ──────────────
+        kp_cusps_out = []
+        for i in range(12):
+            c_deg_sid = (houses[i] - ayanamsa) % 360
+            sign_name = ZODIAC_SIGNS[int(c_deg_sid / 30) % 12]
+            d_in_sign = c_deg_sid % 30
+            sl, stl, subl = get_kp_lords(c_deg_sid)
+            kp_cusps_out.append({
+                "Cusp":      str(i + 1),
+                "Degree":    f"{int(d_in_sign)}°{int((d_in_sign % 1) * 60)}'",
+                "Sign":      sign_name,
+                "Sign Lord": sl,
+                "Star Lord": stl,
+                "Sub Lord":  subl,
+            })
+
+        # ── Ruling Planets ────────────────────────────────────────────────────────
+        day_lords = ["Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Sun"]
+        weekday   = datetime(year, month, day).weekday()
+        kp_ruling_out = [
+            {"Type": "Ascendant", "Sign Lord": kp_planets_out[0]["Sign Lord"], "Star Lord": kp_planets_out[0]["Star Lord"], "Sub Lord": kp_planets_out[0]["Sub Lord"]},
+            {"Type": "Moon",      "Sign Lord": kp_planets_out[2]["Sign Lord"], "Star Lord": kp_planets_out[2]["Star Lord"], "Sub Lord": kp_planets_out[2]["Sub Lord"]},
+            {"Type": "Day Lord",  "Sign Lord": day_lords[weekday],             "Star Lord": "-",                           "Sub Lord": "-"},
+        ]
+
         return {
             "success": True,
             "kundali_data": {
-                "sun_sign": ZODIAC_SIGNS[int(sun_lon // 30)],
-                "moon_sign": ZODIAC_SIGNS[int(moon_lon // 30)],
+                "sun_sign":       ZODIAC_SIGNS[int(sun_lon // 30)],
+                "moon_sign":      ZODIAC_SIGNS[int(moon_lon // 30)],
                 "ascendant_sign": ZODIAC_SIGNS[asc_sign],
-                "nakshatra": NAKSHATRAS[nak_idx],
-                "tithi": TITHIS[tithi_idx]
+                "nakshatra":      NAKSHATRAS[nak_idx],
+                "tithi":          TITHIS[tithi_idx]
             },
-            "chart_houses": chart_houses,
-            "chart_signs": chart_signs,
-            "divisionals": div_charts, # 🚨 Now sends BOTH signs and houses for all 18 charts!
+            "chart_houses":       chart_houses,
+            "chart_signs":        chart_signs,
+            "divisionals":        div_charts,
             "ashtakvarga_scores": ashtakvarga_scores,
-            "dashas": []
+            "kp_planets":         kp_planets_out,
+            "kp_cusps":           kp_cusps_out,
+            "kp_ruling":          kp_ruling_out,
+            "dashas":             []
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
