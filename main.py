@@ -539,6 +539,7 @@ async def generate_kundali(data: ProfileData):
         }
 
         # ── 12. KP Planets ────────────────────────────────────────────────────
+        kp_body_map = [
             ("Ascendant", asc_deg),
             ("Sun",       planet_degrees["Su"]),
             ("Moon",      planet_degrees["Mo"]),
