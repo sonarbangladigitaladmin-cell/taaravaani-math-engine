@@ -587,7 +587,99 @@ async def generate_kundali(data: ProfileData):
             {"Type": "Day Lord",  "Sign Lord": day_lords[weekday],             "Star Lord": "-",                           "Sub Lord": "-"},
         ]
 
-        # ── 15. Return ─────────────────────────────────────────────────────────
+        # ── 15. Vimshottari & Yogini Dasha Engine (Time Travel Math) ──────────
+        from datetime import timedelta
+        
+        birth_dt = datetime(year, month, day)
+        nak_width = 360 / 27
+        passed_nak = moon_lon % nak_width
+        elapsed_ratio = passed_nak / nak_width
+        
+        # 15A. Vimshottari Dasha (6 Levels Unleashed)
+        VIM_LORDS = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
+        VIM_YEARS = [7, 20, 6, 10, 7, 18, 16, 19, 17]
+        start_vim_idx = nak_idx % 9
+        vim_elapsed_days = VIM_YEARS[start_vim_idx] * elapsed_ratio * 365.2425
+        vim_hypo_start = birth_dt - timedelta(days=vim_elapsed_days)
+        
+        def calc_vim(start_dt, lord_idx, duration_years, current_lvl, max_lvl):
+            nodes = []
+            curr_dt = start_dt
+            for i in range(9):
+                sub_idx = (lord_idx + i) % 9
+                sub_duration = duration_years * (VIM_YEARS[sub_idx] / 120.0)
+                sub_days = sub_duration * 365.2425
+                end_dt = curr_dt + timedelta(days=sub_days)
+                node = {
+                    "lord": VIM_LORDS[sub_idx],
+                    "start": curr_dt.strftime("%d %b %Y"),
+                    "end": end_dt.strftime("%d %b %Y"),
+                }
+                if current_lvl < max_lvl:
+                    node["sub_dashas"] = calc_vim(curr_dt, sub_idx, sub_duration, current_lvl + 1, max_lvl)
+                nodes.append(node)
+                curr_dt = end_dt
+            return nodes
+
+        vimshottari_dashas = []
+        curr_v_dt = vim_hypo_start
+        for i in range(9):
+            md_idx = (start_vim_idx + i) % 9
+            md_years = VIM_YEARS[md_idx]
+            md_days = md_years * 365.2425
+            end_dt = curr_v_dt + timedelta(days=md_days)
+            vimshottari_dashas.append({
+                "lord": VIM_LORDS[md_idx],
+                "start": curr_v_dt.strftime("%d %b %Y"),
+                "end": end_dt.strftime("%d %b %Y"),
+                # 🚨 UNLEASHED: 6 levels (Maha -> Antar -> Pratyantar -> Sookshma -> Prana -> Deha)
+                "sub_dashas": calc_vim(curr_v_dt, md_idx, md_years, 2, 6) 
+            })
+            curr_v_dt = end_dt
+
+        # 15B. Yogini Dasha (4 Levels)
+        YOGINI_NAMES = ["Sankata", "Mangala", "Pingala", "Dhanya", "Bhramari", "Bhadrika", "Ulka", "Siddha"]
+        YOGINI_YEARS = [8, 1, 2, 3, 4, 5, 6, 7]
+        start_yog_idx = ((nak_idx + 1) + 3) % 8
+        yog_elapsed_days = YOGINI_YEARS[start_yog_idx] * elapsed_ratio * 365.2425
+        yog_hypo_start = birth_dt - timedelta(days=yog_elapsed_days)
+
+        def calc_yog(start_dt, lord_idx, duration_years, current_lvl, max_lvl):
+            nodes = []
+            curr_dt = start_dt
+            for i in range(8):
+                sub_idx = (lord_idx + i) % 8
+                sub_duration = duration_years * (YOGINI_YEARS[sub_idx] / 36.0)
+                sub_days = sub_duration * 365.2425
+                end_dt = curr_dt + timedelta(days=sub_days)
+                node = {
+                    "lord": YOGINI_NAMES[sub_idx],
+                    "start": curr_dt.strftime("%d %b %Y"),
+                    "end": end_dt.strftime("%d %b %Y"),
+                }
+                if current_lvl < max_lvl:
+                    node["sub_dashas"] = calc_yog(curr_dt, sub_idx, sub_duration, current_lvl + 1, max_lvl)
+                nodes.append(node)
+                curr_dt = end_dt
+            return nodes
+
+        yogini_dashas = []
+        curr_y_dt = yog_hypo_start
+        for cycle in range(3): # Generate 3 cycles to cover 108 years of life
+            for i in range(8):
+                md_idx = (start_yog_idx + i) % 8
+                md_years = YOGINI_YEARS[md_idx]
+                md_days = md_years * 365.2425
+                end_dt = curr_y_dt + timedelta(days=md_days)
+                yogini_dashas.append({
+                    "lord": YOGINI_NAMES[md_idx],
+                    "start": curr_y_dt.strftime("%d %b %Y"),
+                    "end": end_dt.strftime("%d %b %Y"),
+                    "sub_dashas": calc_yog(curr_y_dt, md_idx, md_years, 2, 4)
+                })
+                curr_y_dt = end_dt
+
+        # ── 16. Return ─────────────────────────────────────────────────────────
         return {
             "success":          True,
             "ayanamsha_used":   requested_ayanamsha,   # reflects actual fallback if True Citra was unavailable
@@ -612,8 +704,9 @@ async def generate_kundali(data: ProfileData):
             "kp_planets":         kp_planets_out,
             "kp_cusps":           kp_cusps_out,
             "kp_ruling":          kp_ruling_out,
-            "dashas":             [],
+            "dashas":             {"vimshottari": vimshottari_dashas, "yogini": yogini_dashas},
         }
+        
 
     except Exception as e:
         # Always return the actual error string so Flutter SnackBar can show it.
