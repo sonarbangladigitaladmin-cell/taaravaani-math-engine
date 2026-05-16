@@ -321,15 +321,21 @@ async def generate_kundali(data: ProfileData):
             sl, stl, subl = get_kp_lords(p_deg)
             kp_planets_out.append({"Planet": p_name, "Sign Lord": sl, "Star Lord": stl, "Sub Lord": subl})
 
+        # ── KP Cusps (tropical house cusps → sidereal via ayanamsa) ──────────────
         kp_cusps_out = []
         for i in range(12):
-            c_deg_sid = chalit_houses[i]
+            c_deg_sid = (houses[i] - ayanamsa) % 360
             sign_name = ZODIAC_SIGNS[int(c_deg_sid / 30) % 12]
             d_in_sign = c_deg_sid % 30
             sl, stl, subl = get_kp_lords(c_deg_sid)
             kp_cusps_out.append({
-                "Cusp": str(i + 1), "Degree": f"{int(d_in_sign)}°{int((d_in_sign % 1) * 60)}'",
-                "Sign": sign_name, "Sign Lord": sl, "Star Lord": stl, "Sub Lord": subl,
+                "Cusp":      str(i + 1),
+                # 🚨 Changed from d_in_sign to c_deg_sid to output Absolute 360° format!
+                "Degree":    f"{int(c_deg_sid)}°{int((c_deg_sid % 1) * 60)}'",
+                "Sign":      sign_name,
+                "Sign Lord": sl,
+                "Star Lord": stl,
+                "Sub Lord":  subl,
             })
 
         day_lords = ["Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Sun"]
