@@ -524,3 +524,6 @@ def get_version():
         "available_ayanamshas": list(AYANAMSHA_MAP.keys()),
         "default_ayanamsha":    DEFAULT_AYANAMSHA,
     }
+@app.get("/ping")
+def ping():
+    return {"status": "ok"}
