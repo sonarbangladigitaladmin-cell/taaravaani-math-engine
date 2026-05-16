@@ -120,8 +120,9 @@ async def generate_kundali(data: ProfileData):
         ayanamsa = swe.get_ayanamsa_ut(julday)
         
         # 🚨 THE TWEAK: Western Ascendant - Ayanamsa = Vedic Ascendant
-        houses, ascmc = swe.houses_ex(julday, data.lat, data.lng, b'P', swe.FLG_SIDEREAL)
-        asc_deg = (ascmc[0] - ayanamsa) % 360
+        # Switch to plain houses() which returns tropical, then subtract manually
+        houses, ascmc = swe.houses_ex(julday, data.lat, data.lng, b'P')  # No FLG_SIDEREAL
+        asc_deg = (ascmc[0] - ayanamsa) % 360  # Manual correction — same as Streamlit
         asc_sign = int(asc_deg // 30)
 
         chart_houses = [""] * 12
