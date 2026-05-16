@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware # 🚨 ADDED THIS
 from pydantic import BaseModel
 from datetime import datetime
 import swisseph as swe
@@ -6,7 +7,18 @@ from timezonefinder import TimezoneFinder
 import pytz
 
 app = FastAPI()
+
+# 🚨 ADDED CORS MIDDLEWARE TO ALLOW FLUTTER WEB TO CONNECT
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 tf = TimezoneFinder()
+# ... rest of the code stays exactly the same
 
 class ProfileData(BaseModel):
     name: str
