@@ -208,8 +208,15 @@ async def generate_kundali(data: ProfileData):
         tz_str   = tf.timezone_at(lng=data.lng, lat=data.lat) or 'Asia/Kolkata'
         local_tz = pytz.timezone(tz_str)
 
-        year, month, day          = map(int, data.dob.split('-'))
-        hour, minute, sec         = map(int, (data.time + ':00').split(':')[:3])
+        # Guard: reject missing or malformed dob/time before touching Swiss Ephemeris
+        if not data.dob or not data.time or data.dob.strip() == '' or data.time.strip() == '':
+            return {
+                "success": False,
+                "error": f"Missing birth data — dob='{data.dob}' time='{data.time}'. Profile is incomplete in the database."
+            }
+
+        year, month, day          = map(int, data.dob.strip().split('-'))
+        hour, minute, sec         = map(int, (data.time.strip() + ':00').split(':')[:3])
 
         local_dt = local_tz.localize(datetime(year, month, day, hour, minute, sec))
         utc_dt   = local_dt.astimezone(pytz.utc)
