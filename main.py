@@ -61,59 +61,144 @@ async def generate_kundali(data: ProfileData):
         asc_deg = (ascmc[0] - ayanamsa) % 360
         asc_sign = int(asc_deg // 30)
 
-        # Chart Arrays
-        chart_houses = [""] * 12
-        chart_signs = [""] * 12
-        d9_signs = [""] * 12 # 🚨 Added Navamsa Array
+        # 🚨 MASTER VARGA ALGORITHM
+        def get_varga_sign(degree, varga):
+            sign = int(degree // 30)
+            deg_in_sign = degree % 30
+            if varga == 2:
+                if sign % 2 == 0: return 4 if deg_in_sign < 15 else 3
+                else: return 3 if deg_in_sign < 15 else 4
+            elif varga == 3: return (sign + int(deg_in_sign // 10) * 4) % 12
+            elif varga == 4: return (sign + int(deg_in_sign // 7.5) * 3) % 12
+            elif varga == 7:
+                start = sign if sign % 2 == 0 else (sign + 6) % 12
+                return (start + int(deg_in_sign // (30/7))) % 12
+            elif varga == 9: return int((degree * 9) // 30) % 12
+            elif varga == 10:
+                start = sign if sign % 2 == 0 else (sign + 8) % 12
+                return (start + int(deg_in_sign // 3)) % 12
+            elif varga == 12: return (sign + int(deg_in_sign // 2.5)) % 12
+            elif varga == 16:
+                mod3 = sign % 3
+                start = 0 if mod3 == 0 else (4 if mod3 == 1 else 8)
+                return (start + int(deg_in_sign // (30/16))) % 12
+            elif varga == 20:
+                mod3 = sign % 3
+                start = 0 if mod3 == 0 else (8 if mod3 == 1 else 4)
+                return (start + int(deg_in_sign // 1.5)) % 12
+            elif varga == 24:
+                start = 4 if sign % 2 == 0 else 3
+                return (start + int(deg_in_sign // 1.25)) % 12
+            elif varga == 27:
+                mod4 = sign % 4
+                start = 0 if mod4 == 0 else (3 if mod4 == 1 else (6 if mod4 == 2 else 9))
+                return (start + int(deg_in_sign // (30/27))) % 12
+            elif varga == 30:
+                d = deg_in_sign
+                if sign % 2 == 0:
+                    if d < 5: return 0
+                    elif d < 10: return 10
+                    elif d < 18: return 8
+                    elif d < 25: return 2
+                    else: return 6
+                else:
+                    if d < 5: return 1
+                    elif d < 12: return 5
+                    elif d < 20: return 11
+                    elif d < 25: return 9
+                    else: return 7
+            elif varga == 40:
+                start = 0 if sign % 2 == 0 else 6
+                return (start + int(deg_in_sign // 0.75)) % 12
+            elif varga == 45:
+                mod3 = sign % 3
+                start = 0 if mod3 == 0 else (4 if mod3 == 1 else 8)
+                return (start + int(deg_in_sign // (30/45))) % 12
+            elif varga == 60: return (sign + int(deg_in_sign * 2)) % 12
+            return sign
+
+        vargas = [2, 3, 4, 7, 9, 10, 12, 16, 20, 24, 27, 30, 40, 45, 60]
         
-        planetary_signs = {"Asc": asc_sign}
-        
-        # 🚨 Helper to calculate Navamsa (D9) sign based on exact degrees
-        def get_d9_sign(degree):
-            return int((degree * 9) // 30) % 12
-
-        def add_planet(sign_idx, label, exact_degree):
-            # Add to D1
-            house_idx = (sign_idx - asc_sign) % 12
-            if chart_houses[house_idx]: chart_houses[house_idx] += ", "
-            chart_houses[house_idx] += label
-            if chart_signs[sign_idx]: chart_signs[sign_idx] += ", "
-            chart_signs[sign_idx] += label
-            
-            # Add to D9 Navamsa
-            navamsa_sign = get_d9_sign(exact_degree)
-            if d9_signs[navamsa_sign]: d9_signs[navamsa_sign] += ", "
-            d9_signs[navamsa_sign] += label
-
-        # Inject Ascendant into both charts
-        add_planet(asc_sign, "As", asc_deg)
-
+        # 1. Fetch exact planetary longitudes
+        sun_lon, moon_lon = 0, 0
         bodies = [
             (swe.SUN, 'Su', 'Sun'), (swe.MOON, 'Mo', 'Moon'), (swe.MARS, 'Ma', 'Mars'),
             (swe.MERCURY, 'Me', 'Mercury'), (swe.JUPITER, 'Ju', 'Jupiter'), 
             (swe.VENUS, 'Ve', 'Venus'), (swe.SATURN, 'Sa', 'Saturn'), (swe.TRUE_NODE, 'Ra', 'Rahu')
         ]
-
-        sun_lon = 0
-        moon_lon = 0
-
+        planet_degrees = {}
         for se_id, label, name in bodies:
             res, _ = swe.calc_ut(julday, se_id, swe.FLG_SIDEREAL | swe.FLG_SWIEPH)
             lon = (res[0]) % 360
-            
+            planet_degrees[label] = lon
             if se_id == swe.SUN: sun_lon = lon
             if se_id == swe.MOON: moon_lon = lon
-            
+        
+        sun_sign = int(sun_lon // 30)
+        moon_sign = int(moon_lon // 30)
+
+        # 2. Map Ascendants for EVERY divisional chart (Lagna of that chart)
+        asc_map = {f"D{v}": get_varga_sign(asc_deg, v) for v in vargas}
+        asc_map["Sun"] = sun_sign
+        asc_map["Moon"] = moon_sign
+        asc_map["Chalit"] = asc_sign # Simplified Bhava Chalit
+
+        # 3. Create arrays for Houses AND Signs for all Vargas
+        div_charts = {k: {"signs": [""] * 12, "houses": [""] * 12} for k in asc_map.keys()}
+
+        def add_to_div(chart_name, p_sign, label):
+            a_sign = asc_map[chart_name]
+            h_idx = (p_sign - a_sign) % 12 # Calculate House relative to the specific Varga's Lagna!
+            if div_charts[chart_name]["signs"][p_sign]: div_charts[chart_name]["signs"][p_sign] += ", "
+            div_charts[chart_name]["signs"][p_sign] += label
+            if div_charts[chart_name]["houses"][h_idx]: div_charts[chart_name]["houses"][h_idx] += ", "
+            div_charts[chart_name]["houses"][h_idx] += label
+
+        # 4. Inject "As" (Ascendant) into all Varga charts
+        for chart_name, a_sign in asc_map.items():
+            add_to_div(chart_name, a_sign, "As")
+
+        # Basic D1 Setup
+        chart_houses = [""] * 12
+        chart_signs = [""] * 12
+        planetary_signs = {"Asc": asc_sign}
+
+        def add_planet_d1(sign_idx, label):
+            house_idx = (sign_idx - asc_sign) % 12
+            if chart_houses[house_idx]: chart_houses[house_idx] += ", "
+            chart_houses[house_idx] += label
+            if chart_signs[sign_idx]: chart_signs[sign_idx] += ", "
+            chart_signs[sign_idx] += label
+
+        add_planet_d1(asc_sign, "As")
+
+        # 5. Distribute planets into D1 and all Vargas
+        for se_id, label, name in bodies:
+            lon = planet_degrees[label]
             sign = int(lon // 30)
-            if se_id != swe.TRUE_NODE:
-                planetary_signs[name] = sign
-                
-            add_planet(sign, label, lon)
+            if se_id != swe.TRUE_NODE: planetary_signs[name] = sign
+            
+            add_planet_d1(sign, label)
+            
+            # Distribute to Vargas
+            for v in vargas:
+                v_sign = get_varga_sign(lon, v)
+                add_to_div(f"D{v}", v_sign, label)
+            
+            add_to_div("Sun", sign, label)
+            add_to_div("Moon", sign, label)
+            add_to_div("Chalit", sign, label)
             
             if se_id == swe.TRUE_NODE:
-                ketu_lon = (lon + 180) % 360
-                ketu_sign = int(ketu_lon // 30)
-                add_planet(ketu_sign, "Ke", ketu_lon)
+                k_lon = (lon + 180) % 360
+                k_sign = int(k_lon // 30)
+                add_planet_d1(k_sign, "Ke")
+                for v in vargas:
+                    v_sign = get_varga_sign(k_lon, v)
+                    add_to_div(f"D{v}", v_sign, "Ke")
+                add_to_div("Sun", k_sign, "Ke")
+                add_to_div("Moon", k_sign, "Ke")
+                add_to_div("Chalit", k_sign, "Ke")
 
         # SAV Calculation
         sav_raw = [0] * 12
@@ -142,9 +227,7 @@ async def generate_kundali(data: ProfileData):
             },
             "chart_houses": chart_houses,
             "chart_signs": chart_signs,
-            "divisionals": {            # 🚨 Sending the extra charts!
-                "D9": d9_signs
-            },
+            "divisionals": div_charts, # 🚨 Now sends BOTH signs and houses for all 18 charts!
             "ashtakvarga_scores": ashtakvarga_scores,
             "dashas": []
         }
