@@ -56,26 +56,37 @@ async def generate_kundali(data: ProfileData):
         
         ayanamsa = swe.get_ayanamsa_ut(julday)
 
-        # FIX: Use plain houses_ex WITHOUT FLG_SIDEREAL (returns tropical),
-        # then subtract ayanamsa manually — identical to the working Streamlit code.
-        # Previously: swe.houses_ex(..., swe.FLG_SIDEREAL) was returning an already-sidereal
-        # ascendant, and then subtracting ayanamsa again caused ~24° error (wrong Lagna).
+        # D1 Lagna calculation
         houses, ascmc = swe.houses_ex(julday, data.lat, data.lng, b'P')
         asc_deg = (ascmc[0] - ayanamsa) % 360
         asc_sign = int(asc_deg // 30)
 
+        # Chart Arrays
         chart_houses = [""] * 12
         chart_signs = [""] * 12
+        d9_signs = [""] * 12 # 🚨 Added Navamsa Array
+        
         planetary_signs = {"Asc": asc_sign}
         
-        def add_planet(sign_idx, label):
+        # 🚨 Helper to calculate Navamsa (D9) sign based on exact degrees
+        def get_d9_sign(degree):
+            return int((degree * 9) // 30) % 12
+
+        def add_planet(sign_idx, label, exact_degree):
+            # Add to D1
             house_idx = (sign_idx - asc_sign) % 12
             if chart_houses[house_idx]: chart_houses[house_idx] += ", "
             chart_houses[house_idx] += label
             if chart_signs[sign_idx]: chart_signs[sign_idx] += ", "
             chart_signs[sign_idx] += label
+            
+            # Add to D9 Navamsa
+            navamsa_sign = get_d9_sign(exact_degree)
+            if d9_signs[navamsa_sign]: d9_signs[navamsa_sign] += ", "
+            d9_signs[navamsa_sign] += label
 
-        add_planet(asc_sign, "As")
+        # Inject Ascendant into both charts
+        add_planet(asc_sign, "As", asc_deg)
 
         bodies = [
             (swe.SUN, 'Su', 'Sun'), (swe.MOON, 'Mo', 'Moon'), (swe.MARS, 'Ma', 'Mars'),
@@ -97,13 +108,14 @@ async def generate_kundali(data: ProfileData):
             if se_id != swe.TRUE_NODE:
                 planetary_signs[name] = sign
                 
-            add_planet(sign, label)
+            add_planet(sign, label, lon)
             
             if se_id == swe.TRUE_NODE:
                 ketu_lon = (lon + 180) % 360
                 ketu_sign = int(ketu_lon // 30)
-                add_planet(ketu_sign, "Ke")
+                add_planet(ketu_sign, "Ke", ketu_lon)
 
+        # SAV Calculation
         sav_raw = [0] * 12
         for target_planet, contributions in ASHTAKVARGA_RULES.items():
             for ref_body, offsets in contributions.items():
@@ -130,6 +142,9 @@ async def generate_kundali(data: ProfileData):
             },
             "chart_houses": chart_houses,
             "chart_signs": chart_signs,
+            "divisionals": {            # 🚨 Sending the extra charts!
+                "D9": d9_signs
+            },
             "ashtakvarga_scores": ashtakvarga_scores,
             "dashas": []
         }
