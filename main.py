@@ -38,29 +38,37 @@ ASHTAKVARGA_RULES = {
 TITHIS = ['Pratipada', 'Dwitiya', 'Tritiya', 'Chaturthi', 'Panchami', 'Shashthi', 'Saptami', 'Ashtami', 'Navami', 'Dashami', 'Ekadashi', 'Dwadashi', 'Trayodashi', 'Chaturdashi', 'Purnima', 'Pratipada (K)', 'Dwitiya (K)', 'Tritiya (K)', 'Chaturthi (K)', 'Panchami (K)', 'Shashthi (K)', 'Saptami (K)', 'Ashtami (K)', 'Navami (K)', 'Dashami (K)', 'Ekadashi (K)', 'Dwadashi (K)', 'Trayodashi (K)', 'Chaturdashi (K)', 'Amavasya']
 NAKSHATRAS = ['Ashwini', 'Bharani', 'Krittika', 'Rohini', 'Mrigashirsha', 'Ardra', 'Punarvasu', 'Pushya', 'Ashlesha', 'Magha', 'Purva Phalguni', 'Uttara Phalguni', 'Hasta', 'Chitra', 'Swati', 'Vishakha', 'Anuradha', 'Jyeshtha', 'Moola', 'Purva Ashadha', 'Uttara Ashadha', 'Shravana', 'Dhanishta', 'Shatabhisha', 'Purva Bhadrapada', 'Uttara Bhadrapada', 'Revati']
 ZODIAC_SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces']
+SIGN_LORDS = ["Mars", "Venus", "Mercury", "Moon", "Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Saturn", "Jupiter"]
+NAK_LORDS = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
 
 def get_kp_lords(deg: float):
-    """Returns (Sign Lord, Star Lord, Sub Lord) for a sidereal longitude."""
-    lords      = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
-    years      = [7, 20, 6, 10, 7, 18, 16, 19, 17]
-    sign_lords = ["Mars", "Venus", "Mercury", "Moon", "Sun", "Mercury",
-                  "Venus", "Mars", "Jupiter", "Saturn", "Saturn", "Jupiter"]
-    sign_lord  = sign_lords[int(deg / 30) % 12]
+    sign_lord  = SIGN_LORDS[int(deg / 30) % 12]
     nak_span   = 13 + (20 / 60)
     nak_idx    = int(deg / nak_span)
-    star_lord  = lords[nak_idx % 9]
+    star_lord  = NAK_LORDS[nak_idx % 9]
     deg_in_nak = deg - (nak_idx * nak_span)
     min_in_nak = deg_in_nak * 60
     curr, acc  = nak_idx % 9, 0.0
-    sub_lord   = lords[curr]
+    sub_lord   = NAK_LORDS[curr]
+    years = [7, 20, 6, 10, 7, 18, 16, 19, 17]
     for _ in range(9):
         span = (years[curr] / 120) * 800
         if min_in_nak < acc + span:
-            sub_lord = lords[curr]
+            sub_lord = NAK_LORDS[curr]
             break
         acc += span
         curr = (curr + 1) % 9
     return sign_lord, star_lord, sub_lord
+
+def get_planetary_status(se_id, sign):
+    own = {swe.SUN:[4], swe.MOON:[3], swe.MARS:[0,7], swe.MERCURY:[2,5], swe.JUPITER:[8,11], swe.VENUS:[1,6], swe.SATURN:[9,10]}
+    exalted = {swe.SUN:0, swe.MOON:1, swe.MARS:9, swe.MERCURY:5, swe.JUPITER:3, swe.VENUS:11, swe.SATURN:6}
+    debilitated = {swe.SUN:6, swe.MOON:7, swe.MARS:3, swe.MERCURY:11, swe.JUPITER:9, swe.VENUS:5, swe.SATURN:0}
+    
+    if se_id in exalted and sign == exalted[se_id]: return "Exalted"
+    if se_id in debilitated and sign == debilitated[se_id]: return "Debilitated"
+    if se_id in own and sign in own[se_id]: return "Own Sign"
+    return "Neutral"
 
 @app.post("/api/kundali")
 async def generate_kundali(data: ProfileData):
@@ -84,7 +92,6 @@ async def generate_kundali(data: ProfileData):
         asc_deg = (ascmc[0] - ayanamsa) % 360
         asc_sign = int(asc_deg // 30)
 
-        # 🚨 MASTER VARGA ALGORITHM
         def get_varga_sign(degree, varga):
             sign = int(degree // 30)
             deg_in_sign = degree % 30
@@ -142,49 +149,92 @@ async def generate_kundali(data: ProfileData):
 
         vargas = [2, 3, 4, 7, 9, 10, 12, 16, 20, 24, 27, 30, 40, 45, 60]
         
-        # 1. Fetch exact planetary longitudes
         sun_lon, moon_lon = 0, 0
         bodies = [
             (swe.SUN, 'Su', 'Sun'), (swe.MOON, 'Mo', 'Moon'), (swe.MARS, 'Ma', 'Mars'),
             (swe.MERCURY, 'Me', 'Mercury'), (swe.JUPITER, 'Ju', 'Jupiter'), 
             (swe.VENUS, 'Ve', 'Venus'), (swe.SATURN, 'Sa', 'Saturn'), (swe.TRUE_NODE, 'Ra', 'Rahu')
         ]
+        
         planet_degrees = {}
+        planet_details_out = []
+        planetary_signs = {"Asc": asc_sign}
+        
         for se_id, label, name in bodies:
             res, _ = swe.calc_ut(julday, se_id, swe.FLG_SIDEREAL | swe.FLG_SWIEPH)
             lon = (res[0]) % 360
             planet_degrees[label] = lon
+            sign = int(lon // 30)
+            
             if se_id == swe.SUN: sun_lon = lon
             if se_id == swe.MOON: moon_lon = lon
+            if se_id != swe.TRUE_NODE: planetary_signs[name] = sign
+            
+            d_in_sign = lon % 30
+            nak_idx = int(lon / (360/27))
+            sl, stl, subl = get_kp_lords(lon)
+            status = get_planetary_status(se_id, sign) if se_id != swe.TRUE_NODE else "--"
+            house = ((sign - asc_sign) % 12) + 1
+            
+            planet_details_out.append({
+                "Planet": label,
+                "Sign": ZODIAC_SIGNS[sign],
+                "Sign Lord": sl,
+                "Nakshatra": NAKSHATRAS[nak_idx],
+                "Naksh Lord": stl,
+                "Degree": f"{int(d_in_sign)}°{int((d_in_sign % 1) * 60)}'",
+                "House": str(house),
+                "Status": status
+            })
+            
+            if se_id == swe.TRUE_NODE:
+                k_lon = (lon + 180) % 360
+                k_sign = int(k_lon // 30)
+                planet_degrees["Ke"] = k_lon
+                k_d_in_sign = k_lon % 30
+                k_nak_idx = int(k_lon / (360/27))
+                k_sl, k_stl, k_subl = get_kp_lords(k_lon)
+                k_house = ((k_sign - asc_sign) % 12) + 1
+                
+                planet_details_out.append({
+                    "Planet": "Ke",
+                    "Sign": ZODIAC_SIGNS[k_sign],
+                    "Sign Lord": k_sl,
+                    "Nakshatra": NAKSHATRAS[k_nak_idx],
+                    "Naksh Lord": k_stl,
+                    "Degree": f"{int(k_d_in_sign)}°{int((k_d_in_sign % 1) * 60)}'",
+                    "House": str(k_house),
+                    "Status": "--"
+                })
         
         sun_sign = int(sun_lon // 30)
         moon_sign = int(moon_lon // 30)
 
-        # 2. Map Ascendants for EVERY divisional chart (Lagna of that chart)
+        # ── Bhav Chalit Lagna Math ──
+        chalit_houses = []
+        for i in range(12):
+            chalit_houses.append((houses[i] - ayanamsa) % 360)
+
         asc_map = {f"D{v}": get_varga_sign(asc_deg, v) for v in vargas}
         asc_map["Sun"] = sun_sign
         asc_map["Moon"] = moon_sign
-        asc_map["Chalit"] = asc_sign # Simplified Bhava Chalit
+        asc_map["Chalit"] = asc_sign 
 
-        # 3. Create arrays for Houses AND Signs for all Vargas
         div_charts = {k: {"signs": [""] * 12, "houses": [""] * 12} for k in asc_map.keys()}
 
         def add_to_div(chart_name, p_sign, label):
             a_sign = asc_map[chart_name]
-            h_idx = (p_sign - a_sign) % 12 # Calculate House relative to the specific Varga's Lagna!
+            h_idx = (p_sign - a_sign) % 12
             if div_charts[chart_name]["signs"][p_sign]: div_charts[chart_name]["signs"][p_sign] += ", "
             div_charts[chart_name]["signs"][p_sign] += label
             if div_charts[chart_name]["houses"][h_idx]: div_charts[chart_name]["houses"][h_idx] += ", "
             div_charts[chart_name]["houses"][h_idx] += label
 
-        # 4. Inject "As" (Ascendant) into all Varga charts
         for chart_name, a_sign in asc_map.items():
             add_to_div(chart_name, a_sign, "As")
 
-        # Basic D1 Setup
         chart_houses = [""] * 12
         chart_signs = [""] * 12
-        planetary_signs = {"Asc": asc_sign}
 
         def add_planet_d1(sign_idx, label):
             house_idx = (sign_idx - asc_sign) % 12
@@ -195,25 +245,33 @@ async def generate_kundali(data: ProfileData):
 
         add_planet_d1(asc_sign, "As")
 
-        # 5. Distribute planets into D1 and all Vargas
         for se_id, label, name in bodies:
             lon = planet_degrees[label]
             sign = int(lon // 30)
-            if se_id != swe.TRUE_NODE: planetary_signs[name] = sign
-            
             add_planet_d1(sign, label)
             
-            # Distribute to Vargas
             for v in vargas:
                 v_sign = get_varga_sign(lon, v)
                 add_to_div(f"D{v}", v_sign, label)
             
             add_to_div("Sun", sign, label)
             add_to_div("Moon", sign, label)
-            add_to_div("Chalit", sign, label)
+            
+            # True Bhav Chalit Distribution
+            chalit_house = 0
+            for i in range(12):
+                h_start = chalit_houses[i]
+                h_end = chalit_houses[(i+1)%12]
+                if h_start < h_end:
+                    if h_start <= lon < h_end: chalit_house = i
+                else:
+                    if lon >= h_start or lon < h_end: chalit_house = i
+            
+            c_sign = (asc_sign + chalit_house) % 12
+            add_to_div("Chalit", c_sign, label)
             
             if se_id == swe.TRUE_NODE:
-                k_lon = (lon + 180) % 360
+                k_lon = planet_degrees["Ke"]
                 k_sign = int(k_lon // 30)
                 add_planet_d1(k_sign, "Ke")
                 for v in vargas:
@@ -221,60 +279,59 @@ async def generate_kundali(data: ProfileData):
                     add_to_div(f"D{v}", v_sign, "Ke")
                 add_to_div("Sun", k_sign, "Ke")
                 add_to_div("Moon", k_sign, "Ke")
-                add_to_div("Chalit", k_sign, "Ke")
+                
+                k_chalit_house = 0
+                for i in range(12):
+                    h_start = chalit_houses[i]
+                    h_end = chalit_houses[(i+1)%12]
+                    if h_start < h_end:
+                        if h_start <= k_lon < h_end: k_chalit_house = i
+                    else:
+                        if k_lon >= h_start or k_lon < h_end: k_chalit_house = i
+                add_to_div("Chalit", (asc_sign + k_chalit_house) % 12, "Ke")
 
-        # SAV Calculation
+        # Ashtakvarga: Total SAV + Individual BAV
         sav_raw = [0] * 12
+        bav_map = {}
         for target_planet, contributions in ASHTAKVARGA_RULES.items():
+            bav = [0]*12
             for ref_body, offsets in contributions.items():
                 ref_sign = planetary_signs.get(ref_body)
                 if ref_sign is None: continue
                 for offset in offsets:
-                    target_sign = (ref_sign + offset) % 12
-                    sav_raw[target_sign] += 1
-                    
-        ashtakvarga_scores = {str(i): score for i, score in enumerate(sav_raw)}
+                    bav[(ref_sign + offset) % 12] += 1
+                    sav_raw[(ref_sign + offset) % 12] += 1
+            bav_map[target_planet] = {str(i): score for i, score in enumerate(bav)}
+        
+        bav_map["SAV"] = {str(i): score for i, score in enumerate(sav_raw)}
 
         tithi_diff = (moon_lon - sun_lon) % 360
         tithi_idx = int(tithi_diff // 12)
         nak_idx = int(moon_lon // (360/27))
 
-        # ── KP Planets ────────────────────────────────────────────────────────────
-        ketu_lon = (planet_degrees["Ra"] + 180) % 360
+        # KP Data (Reusing the earlier logic)
         kp_body_map = [
-            ("Ascendant", asc_deg),
-            ("Sun",       planet_degrees["Su"]),
-            ("Moon",      planet_degrees["Mo"]),
-            ("Mars",      planet_degrees["Ma"]),
-            ("Mercury",   planet_degrees["Me"]),
-            ("Jupiter",   planet_degrees["Ju"]),
-            ("Venus",     planet_degrees["Ve"]),
-            ("Saturn",    planet_degrees["Sa"]),
-            ("Rahu",      planet_degrees["Ra"]),
-            ("Ketu",      ketu_lon),
+            ("Ascendant", asc_deg), ("Sun", planet_degrees["Su"]), ("Moon", planet_degrees["Mo"]),
+            ("Mars", planet_degrees["Ma"]), ("Mercury", planet_degrees["Me"]), ("Jupiter", planet_degrees["Ju"]),
+            ("Venus", planet_degrees["Ve"]), ("Saturn", planet_degrees["Sa"]), ("Rahu", planet_degrees["Ra"]),
+            ("Ketu", planet_degrees["Ke"]),
         ]
         kp_planets_out = []
         for p_name, p_deg in kp_body_map:
             sl, stl, subl = get_kp_lords(p_deg)
             kp_planets_out.append({"Planet": p_name, "Sign Lord": sl, "Star Lord": stl, "Sub Lord": subl})
 
-        # ── KP Cusps (tropical house cusps → sidereal via ayanamsa) ──────────────
         kp_cusps_out = []
         for i in range(12):
-            c_deg_sid = (houses[i] - ayanamsa) % 360
+            c_deg_sid = chalit_houses[i]
             sign_name = ZODIAC_SIGNS[int(c_deg_sid / 30) % 12]
             d_in_sign = c_deg_sid % 30
             sl, stl, subl = get_kp_lords(c_deg_sid)
             kp_cusps_out.append({
-                "Cusp":      str(i + 1),
-                "Degree":    f"{int(d_in_sign)}°{int((d_in_sign % 1) * 60)}'",
-                "Sign":      sign_name,
-                "Sign Lord": sl,
-                "Star Lord": stl,
-                "Sub Lord":  subl,
+                "Cusp": str(i + 1), "Degree": f"{int(d_in_sign)}°{int((d_in_sign % 1) * 60)}'",
+                "Sign": sign_name, "Sign Lord": sl, "Star Lord": stl, "Sub Lord": subl,
             })
 
-        # ── Ruling Planets ────────────────────────────────────────────────────────
         day_lords = ["Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Sun"]
         weekday   = datetime(year, month, day).weekday()
         kp_ruling_out = [
@@ -295,7 +352,8 @@ async def generate_kundali(data: ProfileData):
             "chart_houses":       chart_houses,
             "chart_signs":        chart_signs,
             "divisionals":        div_charts,
-            "ashtakvarga_scores": ashtakvarga_scores,
+            "ashtakvarga_scores": bav_map,          # 🚨 Now contains SAV AND all BAVs!
+            "planet_details":     planet_details_out, # 🚨 Live planet table data!
             "kp_planets":         kp_planets_out,
             "kp_cusps":           kp_cusps_out,
             "kp_ruling":          kp_ruling_out,
