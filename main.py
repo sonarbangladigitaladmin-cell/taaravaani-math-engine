@@ -602,18 +602,28 @@ async def generate_kundali(data: ProfileData):
         vim_elapsed_days = VIM_YEARS[start_vim_idx] * elapsed_ratio * 365.2425
         vim_hypo_start = birth_dt - timedelta(days=vim_elapsed_days)
         
+        # ARCHITECTURE — Lazy-Load Dasha Engine
+        # Levels 1–4 pre-computed here  →  6,561 nodes  →  safe on 512 MB RAM
+        # Levels 5–6 (Prana, Deha)       →  fetched on-tap via /api/dasha/sublevel
+        #
+        # Every node carries lord_idx + duration_years so Flutter can reconstruct
+        # any sub-level without extra round-trips to the main endpoint.
+        # has_sub=True signals Flutter to show an expand arrow even when sub_dashas=[].
         def calc_vim(start_dt, lord_idx, duration_years, current_lvl, max_lvl):
             nodes = []
             curr_dt = start_dt
             for i in range(9):
-                sub_idx = (lord_idx + i) % 9
+                sub_idx      = (lord_idx + i) % 9
                 sub_duration = duration_years * (VIM_YEARS[sub_idx] / 120.0)
-                sub_days = sub_duration * 365.2425
-                end_dt = curr_dt + timedelta(days=sub_days)
+                sub_days     = sub_duration * 365.2425
+                end_dt       = curr_dt + timedelta(days=sub_days)
                 node = {
-                    "lord": VIM_LORDS[sub_idx],
-                    "start": curr_dt.strftime("%d %b %Y"),
-                    "end": end_dt.strftime("%d %b %Y"),
+                    "lord":           VIM_LORDS[sub_idx],
+                    "start":          curr_dt.strftime("%d %b %Y"),
+                    "end":            end_dt.strftime("%d %b %Y"),
+                    "lord_idx":       sub_idx,
+                    "duration_years": sub_duration,
+                    "has_sub":        True,   # levels 5+6 always exist
                 }
                 if current_lvl < max_lvl:
                     node["sub_dashas"] = calc_vim(curr_dt, sub_idx, sub_duration, current_lvl + 1, max_lvl)
@@ -624,16 +634,20 @@ async def generate_kundali(data: ProfileData):
         vimshottari_dashas = []
         curr_v_dt = vim_hypo_start
         for i in range(9):
-            md_idx = (start_vim_idx + i) % 9
+            md_idx  = (start_vim_idx + i) % 9
             md_years = VIM_YEARS[md_idx]
-            md_days = md_years * 365.2425
-            end_dt = curr_v_dt + timedelta(days=md_days)
+            md_days  = md_years * 365.2425
+            end_dt   = curr_v_dt + timedelta(days=md_days)
             vimshottari_dashas.append({
-                "lord": VIM_LORDS[md_idx],
-                "start": curr_v_dt.strftime("%d %b %Y"),
-                "end": end_dt.strftime("%d %b %Y"),
-                # 🚨 UNLEASHED: 6 levels (Maha -> Antar -> Pratyantar -> Sookshma -> Prana -> Deha)
-                "sub_dashas": calc_vim(curr_v_dt, md_idx, md_years, 2, 6) 
+                "lord":           VIM_LORDS[md_idx],
+                "start":          curr_v_dt.strftime("%d %b %Y"),
+                "end":            end_dt.strftime("%d %b %Y"),
+                "lord_idx":       md_idx,
+                "duration_years": float(md_years),
+                "has_sub":        True,
+                # Pre-load levels 2–4 (Antar, Pratyantar, Sookshma) — 6,561 nodes max.
+                # Levels 5 (Prana) and 6 (Deha) are fetched lazily on user tap.
+                "sub_dashas": calc_vim(curr_v_dt, md_idx, md_years, 2, 4)
             })
             curr_v_dt = end_dt
 
@@ -725,6 +739,56 @@ async def generate_kundali(data: ProfileData):
 @app.get("/")
 def read_root():
     return {"status": "TaaraVaani Engine is Online"}
+
+# ── Lazy Dasha Sub-Level Endpoint ────────────────────────────────────────────
+# Flutter calls this when the user taps to expand Level 5 (Prana) or Level 6
+# (Deha). Returns exactly 9 nodes — no recursion, no OOM risk.
+#
+# Request:  lord_idx (0-8), start_date ("DD Mon YYYY"), duration_years, level (5 or 6)
+# Response: 9 child nodes, each carrying lord_idx + duration_years for further expansion
+#
+# Level 5 nodes have has_sub=True  (Deha children exist)
+# Level 6 nodes have has_sub=False (Deha is the true leaf — nothing below)
+
+class SubLevelRequest(BaseModel):
+    lord_idx:       int
+    start_date:     str    # "DD Mon YYYY" — same format the main endpoint returns
+    duration_years: float
+    level:          int    # 5 = computing Prana, 6 = computing Deha
+
+@app.post("/api/dasha/sublevel")
+async def get_dasha_sublevel(data: SubLevelRequest):
+    try:
+        VIM_LORDS = ["Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury"]
+        VIM_YEARS = [7, 20, 6, 10, 7, 18, 16, 19, 17]
+
+        try:
+            start_dt = datetime.strptime(data.start_date, "%d %b %Y")
+        except ValueError:
+            start_dt = datetime.strptime(data.start_date, "%Y-%m-%d")
+
+        nodes    = []
+        curr_dt  = start_dt
+        for i in range(9):
+            sub_idx      = (data.lord_idx + i) % 9
+            sub_duration = data.duration_years * (VIM_YEARS[sub_idx] / 120.0)
+            sub_days     = sub_duration * 365.2425
+            end_dt       = curr_dt + timedelta(days=sub_days)
+            nodes.append({
+                "lord":           VIM_LORDS[sub_idx],
+                "start":          curr_dt.strftime("%d %b %Y"),
+                "end":            end_dt.strftime("%d %b %Y"),
+                "lord_idx":       sub_idx,
+                "duration_years": sub_duration,
+                "has_sub":        data.level < 6,  # Prana(5) has Deha children; Deha(6) is leaf
+            })
+            curr_dt = end_dt
+
+        return {"success": True, "level": data.level, "nodes": nodes}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 
 @app.get("/api/version")
 def get_version():
