@@ -319,7 +319,7 @@ async def generate_kundali(data: ProfileData):
 
         # FLG_SIDEREAL applies the active sid_mode ayanamsha automatically.
         # FLG_SPEED gives us the daily motion — negative = retrograde.
-        CALC_FLAGS = swe.FLG_SIDEREAL | swe.FLG_SWIEPH | swe.FLG_SPEED
+        CALC_FLAGS = swe.FLG_SWIEPH | swe.FLG_SPEED
 
         planet_degrees   = {}
         planet_details_out = []
@@ -328,7 +328,7 @@ async def generate_kundali(data: ProfileData):
 
         for se_id, label, name in bodies:
             res, _  = swe.calc_ut(julday, se_id, CALC_FLAGS)
-            lon     = res[0] % 360          # sidereal longitude 0–360°
+            lon     = (res[0] - ayanamsa) % 360          # sidereal longitude 0–360°
             speed   = res[3]                # deg/day; negative = retrograde
             is_retro= speed < 0
 
