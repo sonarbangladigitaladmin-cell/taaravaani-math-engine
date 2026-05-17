@@ -691,12 +691,118 @@ async def generate_kundali(data: ProfileData):
                     "end": end_dt.strftime("%d %b %Y"),
                     "sub_dashas": calc_yog(curr_y_dt, md_idx, md_years, 2, 4)
                 })
-                curr_y_dt = end_dt
+curr_y_dt = end_dt
+
+        # ── 15.5 Dosha & Sadesati Math Engine (100-Year Orbital Scanner) ──────
+        # 1. Manglik Dosha (Kuja Dosha)
+        mars_sign = int(planet_degrees["Ma"] // 30)
+        mars_house = ((mars_sign - asc_sign) % 12) + 1
+        is_manglik = mars_house in [1, 4, 7, 8, 12]
+        manglik_reasons = [f"Mars is positioned in the {mars_house}th house from the Ascendant."] if is_manglik else []
+
+        # 2. Kalsarpa Dosha
+        rahu_lon = planet_degrees["Ra"]
+        lons = [(planet_degrees[p] - rahu_lon) % 360 for p in ["Su", "Mo", "Ma", "Me", "Ju", "Ve", "Sa"]]
+        is_kalsarpa = all(0 < l < 180 for l in lons) or all(180 < l < 360 for l in lons)
+
+        # 3. Sade Sati Scanner (Saturn transiting 12th, 1st, 2nd from Moon)
+        ss_rising = (moon_sign - 1) % 12
+        ss_peak = moon_sign
+        ss_setting = (moon_sign + 1) % 12
+        target_ss_signs = {ss_rising: "Rising", ss_peak: "Peak", ss_setting: "Setting"}
+
+        sadesati_periods = []
+        scan_jd = julday - (5 * 365.25) # Start scanning 5 years before birth
+        end_scan_jd = julday + (90 * 365.25) # Scan forward 90 years
+        
+        current_ss_sign = None
+        start_transit_jd = None
+        
+        while scan_jd < end_scan_jd:
+            swe.set_sid_mode(sid_mode_id)
+            res_sat, _ = swe.calc_ut(scan_jd, swe.SATURN, CALC_FLAGS)
+            sat_sign = int(((res_sat[0] - swe.get_ayanamsa_ut(scan_jd)) % 360) // 30)
+
+            if sat_sign in target_ss_signs:
+                if current_ss_sign is None:
+                    current_ss_sign = sat_sign
+                    start_transit_jd = scan_jd
+                elif sat_sign != current_ss_sign: # Phase changed (e.g., Rising -> Peak)
+                    y1, m1, d1, _ = swe.revjul(start_transit_jd)
+                    y2, m2, d2, _ = swe.revjul(scan_jd)
+                    sadesati_periods.append({
+                        "start": datetime(y1, m1, d1).strftime("%d %b %Y"),
+                        "end": datetime(y2, m2, d2).strftime("%d %b %Y"),
+                        "sign": ZODIAC_SIGNS[current_ss_sign],
+                        "type": target_ss_signs[current_ss_sign]
+                    })
+                    current_ss_sign = sat_sign
+                    start_transit_jd = scan_jd
+            else:
+                if current_ss_sign is not None: # Exited Sadesati
+                    y1, m1, d1, _ = swe.revjul(start_transit_jd)
+                    y2, m2, d2, _ = swe.revjul(scan_jd)
+                    sadesati_periods.append({
+                        "start": datetime(y1, m1, d1).strftime("%d %b %Y"),
+                        "end": datetime(y2, m2, d2).strftime("%d %b %Y"),
+                        "sign": ZODIAC_SIGNS[current_ss_sign],
+                        "type": target_ss_signs[current_ss_sign]
+                    })
+                    current_ss_sign = None
+                    start_transit_jd = None
+            scan_jd += 5.0 # Leap forward 5 days for performance
+
+        # 4. Check Current Sadesati Status
+        now_dt = datetime.utcnow()
+        now_jd = swe.julday(now_dt.year, now_dt.month, now_dt.day, 12.0)
+        res_now, _ = swe.calc_ut(now_jd, swe.SATURN, CALC_FLAGS)
+        sat_now_sign = int(((res_now[0] - swe.get_ayanamsa_ut(now_jd)) % 360) // 30)
+        
+        is_ss_active = sat_now_sign in target_ss_signs
+        current_ss_phase = target_ss_signs.get(sat_now_sign, "Rising")
+        current_ss_from = ""
+        current_ss_to = ""
+
+        if is_ss_active:
+            for p in sadesati_periods:
+                try:
+                    s_dt = datetime.strptime(p['start'], "%d %b %Y")
+                    e_dt = datetime.strptime(p['end'], "%d %b %Y")
+                    if s_dt <= now_dt <= e_dt:
+                        current_ss_from = p['start']
+                        current_ss_to = p['end']
+                        break
+                except: pass
 
         # ── 16. Return ─────────────────────────────────────────────────────────
         return {
             "success":          True,
-            "ayanamsha_used":   requested_ayanamsha,   # reflects actual fallback if True Citra was unavailable
+            "ayanamsha_used":   requested_ayanamsha,
+            "ayanamsha_value":  round(ayanamsa, 6),
+            "kundali_data": {
+                "sun_sign":       ZODIAC_SIGNS[sun_sign],
+                "moon_sign":      ZODIAC_SIGNS[moon_sign],
+                "ascendant_sign": ZODIAC_SIGNS[asc_sign],
+                "nakshatra":      NAKSHATRAS[nak_idx],
+                "tithi":          TITHIS[tithi_idx],
+                "sunrise":        sunrise_str,
+                "sunset":         sunset_str,
+                "karan":          karan_name,
+                "yog":            YOGAS[yoga_idx],
+                "avakhada":       avakhada_out,
+                
+                # 🚨 INJECTED: Sadesati and Dosha Data payload for Flutter!
+                "manglik":                is_manglik,
+                "manglik_reasons":        manglik_reasons,
+                "kalsarpa":               is_kalsarpa,
+                "sadesati_active":        is_ss_active,
+                "sadesati_current_phase": current_ss_phase,
+                "sadesati_current_from":  current_ss_from,
+                "sadesati_current_to":    current_ss_to,
+                "sadesati_periods":       sadesati_periods,
+            },
+            "chart_houses":       chart_houses,
+            "chart_signs":        chart_signs,
             "ayanamsha_value":  round(ayanamsa, 6),    # actual degrees value
             "kundali_data": {
                 "sun_sign":       ZODIAC_SIGNS[sun_sign],
