@@ -61,6 +61,7 @@ swe.set_ephe_path(_EPHE_PATH)
 AYANAMSHA_MAP: dict[str, int] = {
     "lahiri":     1,
     "raman":      3,
+    "kp":         5,    # 🚨 ADDED: Krishnamurti Paddhati Ayanamsha
     "true_citra": 27,   # True Chitrapaksha — requires sefstars.txt in ephe path
 }
 DEFAULT_AYANAMSHA = "true_citra"
