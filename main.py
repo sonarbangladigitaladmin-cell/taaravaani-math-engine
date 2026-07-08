@@ -23,7 +23,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https://(www\.)?sonarbangladigital\.com$|^https://expert\.sonarbangladigital\.com$|^https://admin\.sonarbangladigital\.com$|^http://localhost(:\d+)?$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
