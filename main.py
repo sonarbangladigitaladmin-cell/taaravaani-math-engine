@@ -266,6 +266,15 @@ async def generate_kundali(data: ProfileData):
         local_dt = local_tz.localize(datetime(year, month, day, hour, minute, sec))
         utc_dt   = local_dt.astimezone(pytz.utc)
 
+        # Format the UTC offset actually in effect at this historical birth moment —
+        # DST and even base-offset rules can differ across decades, so this must come
+        # from local_dt's own resolved offset, not a generic "current" zone lookup.
+        _offset_td = local_dt.utcoffset()
+        _offset_total_min = int(_offset_td.total_seconds() // 60)
+        _offset_sign = '+' if _offset_total_min >= 0 else '-'
+        _offset_abs = abs(_offset_total_min)
+        utc_offset_str = f"{_offset_sign}{_offset_abs // 60:02d}:{_offset_abs % 60:02d}"
+
         # ── 2. Set Ayanamsha (ALWAYS use integer ID — never swe.SIDM_* constant) ──
         # swe.SIDM_* named constants were added at different pyswisseph versions.
         # Using the integer directly works on every pyswisseph build from 1.x onward.
@@ -511,15 +520,19 @@ async def generate_kundali(data: ProfileData):
         # Sunrise & Sunset (Swiss Ephemeris exact calculation)
         sunrise_str, sunset_str = "06:00:00", "18:00:00"
         try:
-            res_rise = swe.rise_trans(julday, swe.SUN, b'', swe.CALC_RISE, (data.lng, data.lat, 0.0), 0, 0)
-            res_set  = swe.rise_trans(julday, swe.SUN, b'', swe.CALC_SET,  (data.lng, data.lat, 0.0), 0, 0)
+            res_rise = swe.rise_trans(julday, swe.SUN, swe.CALC_RISE, (data.lng, data.lat, 0.0), 0, 0)
+            res_set  = swe.rise_trans(julday, swe.SUN, swe.CALC_SET,  (data.lng, data.lat, 0.0), 0, 0)
             def jd_to_local(jd):
                 y, m, d, h = swe.revjul(jd)
                 dt = datetime(y, m, d, int(h), int((h - int(h)) * 60), int((((h - int(h)) * 60) - int((h - int(h)) * 60)) * 60), tzinfo=pytz.utc)
                 return dt.astimezone(local_tz).strftime('%H:%M:%S')
-            sunrise_str = jd_to_local(res_rise[0][0])
-            sunset_str  = jd_to_local(res_set[0][0])
-        except Exception: pass
+            sunrise_str = jd_to_local(res_rise[1][0])
+            sunset_str  = jd_to_local(res_set[1][0])
+        except Exception as e:
+            # Was: except Exception: pass — a fallback default is fine, a SILENT
+            # one isn't. Log so a regression here is visible instead of quietly
+            # reverting every chart to a fake 06:00/18:00 forever.
+            print(f"[WARN] sunrise/sunset rise_trans failed for lat={data.lat} lng={data.lng}: {e}")
 
         avakhada_out = {
             "Varna": ["Kshattriya", "Vaishya", "Shudra", "Brahmin"][moon_sign % 4],
@@ -782,6 +795,8 @@ async def generate_kundali(data: ProfileData):
                 "ascendant_sign": ZODIAC_SIGNS[asc_sign],
                 "nakshatra":      NAKSHATRAS[nak_idx],
                 "tithi":          TITHIS[tithi_idx],
+                "timezone":       tz_str,
+                "utc_offset":     utc_offset_str,
                 "sunrise":        sunrise_str,
                 "sunset":         sunset_str,
                 "karan":          karan_name,
